@@ -28,6 +28,8 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
 from sklearn.metrics import confusion_matrix, recall_score
 from sklearn.metrics import f1_score
+import seaborn as sns
+import numpy as np
 import configparser
 
 
@@ -94,7 +96,7 @@ def run_gbm():
     y = df_cleaned.iloc[:, -1]   # Label，take the last column
 
     # dive the data into training and testing set
-    x_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=114514)
+    x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=114514)
 
 
     #GBM
@@ -102,7 +104,7 @@ def run_gbm():
     gbm.fit(x_train, y_train)
 
     gbm_train_pred = gbm.predict(x_train)
-    gbm_test_pred = gbm.predict(X_test)
+    gbm_test_pred = gbm.predict(x_test)
 
     accuracy_train_gbm  = accuracy_score(y_train,gbm_train_pred)
     accuracy_test_gbm   = accuracy_score(y_test,gbm_test_pred)
@@ -155,6 +157,23 @@ def run_gbm():
     plt.savefig("results//GBM_feature_importance.png")  # 保存为 PNG 格式
 
 
+    # 计算混淆矩阵
+    cm = confusion_matrix(y_test, gbm_test_pred)
+    cm_normalized = cm.astype('float') / cm.sum(axis=1, keepdims=True)
+
+    # 获取类别标签
+    classes = np.unique(y_test)
+
+    # 绘制混淆矩阵
+    plt.figure(figsize=(6, 5))
+    sns.heatmap(cm_normalized, annot=True, fmt='.2f', cmap='Blues', xticklabels=classes, yticklabels=classes)
+    plt.xlabel('Predicted Label')
+    plt.ylabel('True Label')
+    plt.title('Confusion Matrix')
+    plt.savefig("results//confusion_matrix_gbm.png", dpi=300, bbox_inches='tight')  # 保存为高分辨率 PNG
+    plt.close()
+
+
     with open('results//gbm_result.txt','w') as f:
         sys.stdout = f 
         print(f'GBM accuracy on train: {accuracy_train_gbm:.3f}')
@@ -170,6 +189,53 @@ def run_gbm():
         print(f'GBM NPV on test: {pnv_test_gbm:.3f}')
         print(f'GBM F1 on train: {f1_train_gbm:.3f}')
         print(f'GBM F1 on test: {f1_test_gbm:.3f}')
+
+    # 训练 GBM 模型
+    gbm = GradientBoostingClassifier(n_estimators=my_n_estimators, learning_rate=my_learning_rate, max_depth=my_max_depth)
+    gbm.fit(x_train, y_train)
+
+    # 计算预测概率
+    y_pred_prob = gbm.predict_proba(x_test)[:, 1]  # 取正例的概率
+
+    # 定义决策阈值范围
+    thresholds = np.linspace(0.01, 0.99, 100)
+
+    # 存储净收益
+    net_benefit_model = []
+    net_benefit_all = []
+    net_benefit_none = np.zeros_like(thresholds)
+
+    N = len(y_test)  # 样本总数
+    y_test = np.array(y_test)
+
+    for p_t in thresholds:
+        y_pred_binary = (y_pred_prob >= p_t).astype(int)  # 根据阈值二分类
+
+        TP = np.sum((y_pred_binary == 1) & (y_test == 1))  # 计算 TP
+        FP = np.sum((y_pred_binary == 1) & (y_test == 0))  # 计算 FP
+        NB = (TP / N) - (FP / N) * (p_t / (1 - p_t))  # 计算净收益
+        net_benefit_model.append(NB)
+
+        # "全选正例"（所有样本都预测为正例）
+        TP_all = np.sum(y_test == 1)
+        FP_all = np.sum(y_test == 0)
+        NB_all = (TP_all / N) - (FP_all / N) * (p_t / (1 - p_t))
+        net_benefit_all.append(NB_all)
+
+    # 绘制决策曲线
+    plt.figure(figsize=(8, 6))
+    plt.plot(thresholds, net_benefit_model, label='Gradient Boosting Model', color='blue')
+    plt.plot(thresholds, net_benefit_all, label='Treat All', color='red', linestyle='dashed')
+    plt.plot(thresholds, net_benefit_none, label='Treat None', color='black', linestyle='dotted')
+
+    plt.xlabel("Threshold Probability")
+    plt.ylabel("Net Benefit")
+    plt.title("Decision Curve Analysis (DCA)")
+    plt.legend()
+    plt.grid()
+    plt.savefig("results//dca_gbm.png", dpi=300, bbox_inches='tight')  # 保存为高分辨率 PNG
+    plt.close()
+
 
     sys.stdout = sys.__stdout__
 
@@ -253,14 +319,16 @@ def run_rf():
     explainer = shap.TreeExplainer(rf)
     shap_values = explainer.shap_values(x_train)[...,1]
 
-    print(x_train.shape)
-    print(shap_values.shape)
-
     plt.figure()
     shap.summary_plot(shap_values, x_train, show=False)  # 关闭自动显示
-    plt.savefig("results//shap_rf.png", dpi=300, bbox_inches='tight')
+    plt.savefig("results//shap_rf_1.png", dpi=300, bbox_inches='tight')
     plt.close()
 
+    shap_values = explainer.shap_values(x_train)[...,0]
+    plt.figure()
+    shap.summary_plot(shap_values, x_train, show=False)  # 关闭自动显示
+    plt.savefig("results//shap_rf_0.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
     print("Finished RF")
 
